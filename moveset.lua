@@ -18,6 +18,7 @@ do
         "RainbowBanisher.mp3",
         "Echo.mp3",
         "lcshoot.mp3",
+        "GodCat.mp3",
     }
 
     local CHUNK_SIZE  = 512 * 1024       -- download piece size (smaller = smoother progress bar)
@@ -458,7 +459,7 @@ local CONFIG = {
         pending = false, registry = {}, count = 0, readyAt = 0,
     },
     IDLE = { state1 = {}, state2 = {} },
-    REPLACE = { map = {}, tracks = {}, loading = {}, lastTrigger = {} },
+    REPLACE = { map = {}, tracks = {}, loading = {}, lastTrigger = {}, started = {} },
     MODES = {
         SWITCH_KEY = Enum.KeyCode.M,
         SWITCH_SOUND = 4836187667,
@@ -510,7 +511,33 @@ local CONFIG = {
               gun = "rust", -- holds the rusted gun instead of the revolver
               idle = { id = "15311685628", kind = "pingpong", from = 0.75, to = 0.867, waitEnd = 1, waitStart = 0 },
               replace = { ["15162694192"] = "13378708199" } },
+
+            -- GOD CAT: no custom weapon (normal revolver), horns on the body + clone, visualizer flickers black/white shades
+            { text = "God Cat", cylinder = Color3.fromRGB(255, 255, 255), tip = Color3.fromRGB(255, 255, 255),
+              song = "GodCat.mp3", font = Enum.Font.SourceSansItalic, visualizerStrength = 0.03,
+              godCat = true, -- horns + black/white shade flicker (see CONFIG.GODCAT)
+              noWalkAnim = true, -- the idle keeps playing while walking
+              -- idle: the whole animation, looped (both idle animations are on Action3)
+              idle = { id = "15099756132", kind = "loop", priority = Enum.AnimationPriority.Action3 },
+              -- idleLayer: a SECOND idle that plays at the same time, held on one frame (from = to = frozen pose at 0.9s)
+              idleLayer = { id = "15284324734", from = 0.9, to = 0.9, priority = Enum.AnimationPriority.Action3 } },
         },
+    },
+    -- God Cat settings: horn shape + how fast the black/white shades change
+    GODCAT = {
+        FLICKER_RATE = 0.05,     -- seconds between colour changes (horns + visualizer). Lower = faster
+        -- every shade the horns + visualizer can switch between (0 = pure black, 1 = pure white).
+        -- add / remove numbers to change the variety (more grays in the middle = more gray flicker)
+        SHADES = { 0, 0.06, 0.12, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.88, 0.95, 1 },
+        HORN_SEGMENTS = 15,      -- more = smoother curve
+        HORN_SEG_LENGTH = 0.215, -- length per segment (a bit taller than before)
+        HORN_BASE_RADIUS = 0.17, -- thickness at the base
+        HORN_TIP_RADIUS = 0.02,  -- thickness at the tip
+        HORN_START_ANGLE = 35,   -- degrees leaning FORWARD at the base
+        HORN_END_ANGLE = -65,    -- degrees leaning BACKWARD at the tip
+        HORN_OUTWARD = 6,        -- slight sideways splay (degrees)
+        HORN_SIDE_OFFSET = 0.4,  -- distance from the head's centre
+        HORN_FRONT_OFFSET = -0.3, -- negative = front of the head
     },
     PROFILE = false, -- set true to print per-callback cost (ms) every 3s in the output/F9 console
 }
@@ -660,6 +687,42 @@ CONFIG.FLING = {
     active = false, startedAt = nil, sweepStart = nil,
     rotation = nil, axis = nil, axisAt = 0,
 }
+-- P key = ATTACK MODE (changes how the E move works)
+--   Kill   : E sends us to VOID_Y (-2000, the default)
+--   Banish : E sends us to BANISH_Y (a really big number, high above the map)
+CONFIG.ATTACK = {
+    KEY = Enum.KeyCode.P,
+    KILL_Y = -100,    -- the default void height
+    BANISH_Y = 10000000,     -- Banish height (raise it for an even bigger number)
+    modes = { "Kill" },
+    index = 1,          -- starts on Kill
+}
+CONFIG.ATTACK.mode = function() return CONFIG.ATTACK.modes[CONFIG.ATTACK.index] end
+CONFIG.ATTACK.voidY = function()
+    local A = CONFIG.ATTACK
+    return A.mode() == "Banish" and A.BANISH_Y or A.KILL_Y
+end
+
+-- L key = BRING MODE (changes how the R move works)
+--   Kill   : like E's void trip (VOID_Y) but with R's animation, then back to the clone
+--   Bring  : the original R move (teleports us to the clone when finished)
+--   Banish : like Kill but up at BANISH_Y, then back to the clone
+CONFIG.BRING = {
+    KEY = Enum.KeyCode.L,
+    modes = {"Bring", "Banish" },
+    index = 2,          -- starts on Bring = the original R move
+    locked = nil,       -- the mode R started with (a mode change mid-move does not affect it)
+}
+CONFIG.BRING.mode = function()
+    local B = CONFIG.BRING
+    if CONFIG.FLOW.active and B.locked then return B.locked end
+    return B.modes[B.index]
+end
+CONFIG.BRING.useVoid = function() return CONFIG.BRING.mode() ~= "Bring" end
+CONFIG.BRING.voidY = function()
+    return CONFIG.BRING.mode() == "Banish" and CONFIG.ATTACK.BANISH_Y or CONFIG.ATTACK.KILL_Y
+end
+
 -- Each move owns its own cooldown state. Equipping one move's tool must not
 -- put the other move on cooldown.
 local MOVE_COOLDOWNS = {
@@ -857,6 +920,10 @@ local function finishDiagnosticWatch(reason)
     end
     disconnectDiagnosticConnections()
     if endAnimationVoidTrip then endAnimationVoidTrip(reason or "Diagnostic monitor ended") end
+    -- R in Bring Mode Kill / Banish: if the void trip never started (e.g. no valid target), still return to the clone
+    if CONFIG.FLOW.active and not animationVoidTrip and CONFIG.FLOW.finish then
+        CONFIG.FLOW.finish(reason or "Diagnostic monitor ended")
+    end
     if diagnosticTrack then diagnosticLastHandledTrack = diagnosticTrack end
     diagnosticTrack, diagnosticTarget, diagnosticTargetHumanoid = nil, nil, nil
     diagnosticStatus = reason or "Monitor ended"
@@ -870,7 +937,9 @@ local function startDiagnosticWatch(track)
     diagnosticTarget = findShotTarget()
     diagnosticTargetHumanoid = diagnosticTarget and diagnosticTarget:FindFirstChildOfClass("Humanoid") or nil
 
-    if animationIdOf(track) == CONFIG.FLOW.animationId then
+    -- Bring Mode "Bring" = the original R move (straight back to the clone).
+    -- Bring Mode "Kill" / "Banish" skip this and use the same void trip E uses (below), with R's animation.
+    if animationIdOf(track) == CONFIG.FLOW.animationId and not (CONFIG.FLOW.active and CONFIG.BRING.useVoid()) then
         diagnosticStatus = "Flowing Water animation detected; returning to shot position"
         diagnosticLastHandledTrack = track
         if CONFIG.FLOW.finish then CONFIG.FLOW.finish("Flowing Water animation detected") end
@@ -1785,6 +1854,13 @@ endAnimationVoidTrip = function(reason)
     end
     engaged, engagedChar = false, nil
     shotTargetModel, shotReturnCFrame, ghostWorldCF = nil, nil, nil
+    if CONFIG.FLOW.active then -- R (Bring Mode Kill / Banish) finished through the void trip
+        CONFIG.FLOW.destination = nil
+        CONFIG.FLOW.active = false
+        CONFIG.FLOW.fired = false
+        CONFIG.FLOW.toolWarned = false
+        CONFIG.FLOW.toolName = ORBIT_TOOL_NAME
+    end
     diagnosticStatus = reason or "Animation void test ended"
     diagnosticLastOutcome = diagnosticStatus
     setOrbitStatus("disabled")
@@ -1808,7 +1884,9 @@ beginAnimationVoidTrip = function(track, target, targetHumanoid)
     local returnCFrame = shotReturnCFrame or hrp.CFrame
     local orbitWorld = orbitWorldCF or hrp.CFrame
     local orbitPosition = orbitWorld.Position
-    local voidWorldCFrame = CFrame.new(orbitPosition.X, VOID_Y, orbitPosition.Z) * (orbitWorld - orbitPosition)
+    -- R (Bring Mode) and E (Attack Mode) each pick their own void height
+    local voidY = CONFIG.FLOW.active and CONFIG.BRING.voidY() or CONFIG.ATTACK.voidY()
+    local voidWorldCFrame = CFrame.new(orbitPosition.X, voidY, orbitPosition.Z) * (orbitWorld - orbitPosition)
     local trip = {
         track = track, target = target, targetHumanoid = targetHumanoid, targetRoot = targetRoot,
         character = character, hrp = hrp, humanoid = humanoid, returnCFrame = returnCFrame,
@@ -1869,7 +1947,7 @@ beginAnimationVoidTrip = function(track, target, targetHumanoid)
             accumulator %= (1 / 30)
             applyVoidPosition()
         end)
-        diagnosticStatus = string.format("Orbit-relative void position active at Y=%d", VOID_Y)
+        diagnosticStatus = string.format("Orbit-relative void position active at Y=%s", tostring(voidY))
         setOrbitStatus("void positioning through target reference")
     end)
 end
@@ -2276,8 +2354,10 @@ local function setupAnimations(rig)
     local nt = {}
     nt.walk = loadTrack(an, ANIM.WALK, P.Action, true)
     local idleSpec, idle2Spec = CONFIG.IDLE.spec1, CONFIG.IDLE.spec2
-    nt.idle = loadTrack(an, CONFIG.IDLE.normalize(idleSpec.id), P.Action, idleSpec.kind == "loop")
-    if idle2Spec then nt.idle2 = loadTrack(an, CONFIG.IDLE.normalize(idle2Spec.id), P.Action2, idle2Spec.kind == "loop") end
+    nt.idle = loadTrack(an, CONFIG.IDLE.normalize(idleSpec.id), idleSpec.priority or P.Action, idleSpec.kind == "loop")
+    if idle2Spec then nt.idle2 = loadTrack(an, CONFIG.IDLE.normalize(idle2Spec.id), idle2Spec.priority or P.Action2, idle2Spec.kind == "loop") end
+    local layerSpec = CONFIG.IDLE.layerSpec
+    if layerSpec then nt.layer = loadTrack(an, CONFIG.IDLE.normalize(layerSpec.id), layerSpec.priority or P.Action3, false) end
     nt.taunt = loadTrack(an, ANIM.TAUNT, P.Action3, false)
     local shootId, flowingId = CONFIG.MOVEANIM.idsFor(CONFIG.MODES.list[CONFIG.MODES.index])
     nt.shoot1 = loadTrack(an, shootId, P.Action4, false)
@@ -3174,6 +3254,7 @@ CONFIG.FLOW.triggerSequence = function(targetModel, firingCFrame)
     CONFIG.FLOW.fired = true
     CONFIG.FLOW.toolWarned = false
     CONFIG.FLOW.toolName = CONFIG.FLOW.flowingToolName
+    CONFIG.BRING.locked = CONFIG.BRING.modes[CONFIG.BRING.index]
     shotTargetModel = targetModel
 
     -- Ghost + camera first, THEN orbit: the real body must not move to the target
@@ -3332,6 +3413,7 @@ local function animStep(dt)
         if not want[trk.idle] then CONFIG.IDLE.begin(1) end
     end
     CONFIG.IDLE.step(dt, moving)
+    CONFIG.IDLE.layerStep(dt)
     if ov == "taunt" then
         local track = trk.taunt
         if track.TimePosition >= math.min(CONFIG.TAUNT_TIME, track.Length - 0.03) then stopTrack(track, 0.2) ov = nil end
@@ -4314,7 +4396,7 @@ local function buildMovesBox()
     local g = mk("ScreenGui", { Name = "PulseRevolverMoves", ResetOnSpawn = false, DisplayOrder = 100, IgnoreGuiInset = true }, playerGui)
     local basePos = UDim2.new(0, 14, 0.5, 0)
     local box = mk("Frame", {
-        AnchorPoint = Vector2.new(0, 0.5), Position = basePos, Size = UDim2.new(0, 220, 0, 264),
+        AnchorPoint = Vector2.new(0, 0.5), Position = basePos, Size = UDim2.new(0, 220, 0, 322),
         BackgroundColor3 = Color3.fromRGB(12, 13, 18), BackgroundTransparency = 0.5, BorderSizePixel = 0,
     }, g)
     local stroke = mk("UIStroke", { Thickness = 2, Color = live.muzzle, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, box)
@@ -4339,9 +4421,16 @@ local function buildMovesBox()
         line("V - Fling", 154, 26, 22, live.pulse),
         line("C - Delete", 182, 26, 22, live.pulse),
         line("M - Mode", 210, 26, 22, live.pulse),
+        line("P - Kill Mode : " .. CONFIG.ATTACK.mode(), 238, 26, 22, live.pulse),
+        line("L - Bring Mode : " .. CONFIG.BRING.modes[CONFIG.BRING.index], 266, 26, 22, live.pulse),
     }
+    for i = 8, 9 do -- the longer lines shrink to fit the box
+        moves[i].TextScaled = true
+        mk("UITextSizeConstraint", { MaxTextSize = 22 }, moves[i])
+    end
+    MovesBox.attackLine, MovesBox.bringLine = moves[8], moves[9]
     MovesBox.moves = moves
-    local status = line("STATUS - ALIVE", 240, 18, 14, live.pulse, Enum.TextXAlignment.Right)
+    local status = line("STATUS - ALIVE", 296, 18, 14, live.pulse, Enum.TextXAlignment.Right)
 
     local function motion(label, rs, rp, ra, xs, xp, ys, yp, amp)
         return { label = label, base = label.Position, rs = rs, rp = rp, ra = ra, xs = xs, xp = xp, ys = ys, yp = yp, amp = amp }
@@ -4355,6 +4444,8 @@ local function buildMovesBox()
         motion(moves[5], 2.4, 4.2, 1.1, 1.5, 0.3, 2.2, 3.4, 1.6),
         motion(moves[6], 1.7, 2.6, 1.3, 2.1, 4.4, 1.7, 1.9, 1.4),
         motion(moves[7], 2.0, 3.9, 1.2, 1.6, 0.8, 2.3, 4.7, 1.5),
+        motion(moves[8], 1.3, 1.4, 1.1, 2.2, 2.7, 1.5, 3.3, 1.3),
+        motion(moves[9], 2.1, 4.8, 1.4, 1.7, 1.9, 2.0, 0.6, 1.4),
         motion(status,   1.9, 2.4, 0.9, 2.5, 0.9, 1.6, 3.6, 1.0),
     }
 
@@ -4625,6 +4716,9 @@ end
 -- (Immortality Lord): black when quiet -> gray when loud -> pure white when really loud
 CONFIG.FX.visualizerColor = function()
     local FX = CONFIG.FX
+    if FX.shadeFlicker and CONFIG.GODCAT.currentShade then
+        return CONFIG.GODCAT.currentShade() -- God Cat: rapid random shades of black and white
+    end
     if FX.loudnessColor then
         local t = math.clamp(FX.smooth / math.max(CONFIG.VISUALIZER.LOUD_WHITE_AT, 1), 0, 1)
         return Color3.new(t, t, t)
@@ -5243,6 +5337,7 @@ CONFIG.IDLE.setSpecs = function(mode)
     else
         I.spec2 = { id = ANIM.IDLE2, kind = "once" }
     end
+    I.layerSpec = mode.idleLayer -- optional 2nd idle that plays at the same time (God Cat)
     I.state1, I.state2 = {}, {}
     idleHeld = false
     -- the ghost sync mutes these ids while the clone walks
@@ -5351,6 +5446,35 @@ CONFIG.IDLE.step = function(dt, moving)
     end
 end
 
+-- optional 2nd idle that plays AT THE SAME TIME as the main idle (mode.idleLayer = { id, from, to })
+--   to <= from : frozen pose held on `from`      to > from : loops only from..to
+CONFIG.IDLE.layerStep = function(dt)
+    local I = CONFIG.IDLE
+    local spec, track = I.layerSpec, trk.layer
+    if not track then return end
+    if not spec then
+        if want[track] then stopTrack(track, 0.15) end
+        return
+    end
+    local from, to = spec.from or 0, spec.to or spec.from or 0
+    if track.Length > 0 then
+        from = math.min(from, track.Length - 0.02)
+        to = math.min(to, track.Length - 0.02)
+    end
+    local hold = to <= from
+    if not want[track] then
+        playTrack(track, 0.2, from, hold and 0 or 1)
+    end
+    if hold then
+        if wantSpeed[track] ~= 0 then wantSpeed[track] = 0 track:AdjustSpeed(0) end
+        if track.IsPlaying and math.abs(track.TimePosition - from) > 0.005 then track.TimePosition = from end
+        lastTime[track] = from
+    elseif track.TimePosition >= to then
+        track.TimePosition = from
+        lastTime[track] = from
+    end
+end
+
 -- swap the loaded idle tracks to the ones of the current mode (the tracks used after a respawn come from setupAnimations)
 CONFIG.IDLE.rebuild = function()
     local I = CONFIG.IDLE
@@ -5358,17 +5482,22 @@ CONFIG.IDLE.rebuild = function()
     I.rebuildToken = (I.rebuildToken or 0) + 1
     local token, myAnim = I.rebuildToken, animToken
     local an = animator
-    local spec1, spec2 = I.spec1, I.spec2
+    local spec1, spec2, layerSpec = I.spec1, I.spec2, I.layerSpec
     task.spawn(function()
         local P = Enum.AnimationPriority
-        local newIdle = loadTrack(an, I.normalize(spec1.id), P.Action, spec1.kind == "loop")
-        local newIdle2 = spec2 and loadTrack(an, I.normalize(spec2.id), P.Action2, spec2.kind == "loop") or nil
+        local newIdle = loadTrack(an, I.normalize(spec1.id), spec1.priority or P.Action, spec1.kind == "loop")
+        local newIdle2 = spec2 and loadTrack(an, I.normalize(spec2.id), spec2.priority or P.Action2, spec2.kind == "loop") or nil
+        local newLayer = layerSpec and loadTrack(an, I.normalize(layerSpec.id), layerSpec.priority or P.Action3, false) or nil
         if deleted or token ~= I.rebuildToken or myAnim ~= animToken then return end
         for _, old in ipairs({ trk.idle, trk.idle2 }) do
             want[old] = nil
             pcall(function() old:Stop(0.15) end)
         end
-        trk.idle, trk.idle2 = newIdle, newIdle2
+        if trk.layer then
+            want[trk.layer] = nil
+            pcall(function() trk.layer:Stop(0.15) end)
+        end
+        trk.idle, trk.idle2, trk.layer = newIdle, newIdle2, newLayer
         idleHeld, idle2ReadyAt = false, 0
         I.state1, I.state2 = {}, {}
     end)
@@ -5384,7 +5513,7 @@ end
 CONFIG.REPLACE.reset = function() -- the animator changed (respawn / unload): the loaded tracks are gone
     local R = CONFIG.REPLACE
     R.stopAll()
-    R.tracks, R.loading, R.lastTrigger = {}, {}, {}
+    R.tracks, R.loading, R.lastTrigger, R.started = {}, {}, {}, {}
 end
 
 CONFIG.REPLACE.getTrack = function(id)
@@ -5442,6 +5571,14 @@ CONFIG.REPLACE.handle = function(detected)
     pcall(function() detected:Stop(0) end)
     local track = R.getTrack(target)
     if not track or deleted then return end
+    -- Lightning Cannon: when the 2nd replacement animation starts, the 1st one is force-ended (even if it is stuck)
+    if CONFIG.LC.isActive() and target ~= CONFIG.LC.FIRE_ANIM_ID then
+        local first = R.tracks[CONFIG.LC.FIRE_ANIM_ID]
+        if first then
+            pcall(function() first:Stop(0) end)
+            R.started[first] = nil
+        end
+    end
     for _, other in pairs(R.tracks) do
         if other ~= track and other.IsPlaying then other:Stop(0.05) end
     end
@@ -5449,12 +5586,214 @@ CONFIG.REPLACE.handle = function(detected)
     track:Play(0.05)
     track.TimePosition = 0
     track:AdjustSpeed(1)
+    R.started[track] = { t = os.clock() } -- watched by CONFIG.REPLACE.watchdog
     CONFIG.LC.onReplacementPlayed(target, track) -- Lightning Cannon: shot + V move after FIRE_DELAY of the first animation
 end
 
 
+-- Lightning Cannon safety net: a replacement animation is never allowed to keep playing after it should have ended.
+-- Once it reaches its end (or has been running longer than its length + END_GRACE) it is stopped,
+-- so it can never get stuck in the middle and block the idle / other animations.
+CONFIG.REPLACE.END_GRACE = 0.25 -- extra seconds allowed past the animation's length before it is cut
+CONFIG.REPLACE.watchdog = function()
+    local R = CONFIG.REPLACE
+    if deleted then return end
+    if not CONFIG.LC.isActive() then
+        if next(R.started) then R.started = {} end
+        return
+    end
+    local now = os.clock()
+    for track, info in pairs(R.started) do
+        if not track.IsPlaying then
+            R.started[track] = nil
+        else
+            local length = track.Length
+            local speed = math.max(math.abs(track.Speed), 0.05)
+            local limit = (length > 0 and length or 8) / speed + R.END_GRACE
+            local finished = length > 0 and track.TimePosition >= length - 0.02
+            local age = now - info.t
+            if age > limit + 0.5 then
+                -- still playing well past the end: hard stop
+                pcall(function() track:Stop(0) end)
+                R.started[track] = nil
+            elseif finished or age > limit then
+                if not info.stopping then
+                    info.stopping = true
+                    pcall(function() track:Stop(0.1) end)
+                end
+            end
+        end
+    end
+end
+CONFIG.REPLACE.conn = RunService.Heartbeat:Connect(CONFIG.REPLACE.watchdog)
+
 -- safe defaults (the first mode overwrites these on startup)
 CONFIG.IDLE.setSpecs({})
+
+-- P / L: cycle the Attack Mode (E) and the Bring Mode (R) and update their lines in the moves box
+CONFIG.ATTACK.refresh = function()
+    if MovesBox.attackLine then MovesBox.attackLine.Text = "P - Kill Mode : " .. CONFIG.ATTACK.mode() end
+end
+CONFIG.ATTACK.cycle = function()
+    local A = CONFIG.ATTACK
+    if deleted then return end
+    A.index = A.index % #A.modes + 1
+    A.refresh()
+end
+CONFIG.BRING.refresh = function()
+    if MovesBox.bringLine then MovesBox.bringLine.Text = "L - Bring Mode : " .. CONFIG.BRING.modes[CONFIG.BRING.index] end
+end
+CONFIG.BRING.cycle = function()
+    local B = CONFIG.BRING
+    if deleted then return end
+    B.index = B.index % #B.modes + 1
+    B.refresh()
+end
+
+------------------------------------------------------------------
+-- GOD CAT: horns on the body AND on the clone, rapid black/white shade flicker
+--   * while the God Cat mode is selected, horns are kept on the real character's Head
+--     and, whenever the clone (ghost) exists, on the clone's Head too
+--   * switching to another mode (or deleting the script) removes them again
+------------------------------------------------------------------
+do
+    local G = CONFIG.GODCAT
+    local HORNS_NAME = "GodCatHorns"
+    G.active, G.shade, G.nextShadeAt, G.nextFlickerAt, G.nextEnsureAt = false, Color3.new(1, 1, 1), 0, 0, 0
+
+    -- a random shade from the SHADES list: black, dark gray, gray, light gray, dark white, white ...
+    G.randomShade = function()
+        local list = G.SHADES
+        local v = list[math.random(1, #list)]
+        return Color3.new(v, v, v)
+    end
+
+    -- one shared shade that changes every FLICKER_RATE seconds (used by the visualizer ring + particles)
+    G.currentShade = function()
+        local now = os.clock()
+        if now >= G.nextShadeAt then
+            G.nextShadeAt = now + G.FLICKER_RATE
+            G.shade = G.randomShade()
+        end
+        return G.shade
+    end
+
+    -- builds the two horns on `head` and parents the model to `body` (the character or the clone)
+    G.buildHorns = function(body, head)
+        local horns = Instance.new("Model")
+        horns.Name = HORNS_NAME
+        for _, side in ipairs({ 1, -1 }) do -- 1 = right, -1 = left
+            local pos = Vector3.new(side * G.HORN_SIDE_OFFSET, head.Size.Y / 2 - 0.05, G.HORN_FRONT_OFFSET)
+            for i = 1, G.HORN_SEGMENTS do
+                local t = (i - 1) / (G.HORN_SEGMENTS - 1)
+                local phi = math.rad(G.HORN_START_ANGLE + (G.HORN_END_ANGLE - G.HORN_START_ANGLE) * t)
+                local out = math.rad(G.HORN_OUTWARD)
+                -- phi > 0 leans toward the front (-Z), phi < 0 leans backward (+Z)
+                local dir = Vector3.new(side * math.sin(out), math.cos(phi), -math.sin(phi)).Unit
+                local radius = G.HORN_BASE_RADIUS + (G.HORN_TIP_RADIUS - G.HORN_BASE_RADIUS) * t
+                local center = pos + dir * (G.HORN_SEG_LENGTH / 2)
+                local y = dir:Cross(Vector3.new(1, 0, 0)).Unit
+                local z = dir:Cross(y)
+
+                local part = Instance.new("Part")
+                part.Name = "HornSegment"
+                part.Shape = Enum.PartType.Cylinder
+                part.Size = Vector3.new(G.HORN_SEG_LENGTH * 1.35, radius * 2, radius * 2)
+                part.Material = Enum.Material.Neon
+                part.Color = G.randomShade()
+                part.CanCollide = false
+                part.CanTouch = false
+                part.CanQuery = false
+                part.CastShadow = false
+                part.Massless = true
+                part.Anchored = false
+                part.TopSurface = Enum.SurfaceType.Smooth
+                part.BottomSurface = Enum.SurfaceType.Smooth
+                part.CFrame = head.CFrame * CFrame.fromMatrix(center, dir, y, z)
+                part.Parent = horns
+
+                local weld = Instance.new("WeldConstraint")
+                weld.Part0 = head
+                weld.Part1 = part
+                weld.Parent = part
+
+                pos = pos + dir * (G.HORN_SEG_LENGTH * 0.9)
+            end
+        end
+        horns.Parent = body
+        return horns
+    end
+
+    local function hornsValid(body, head)
+        local horns = body:FindFirstChild(HORNS_NAME)
+        if not horns then return false end
+        local seg = horns:FindFirstChildWhichIsA("BasePart")
+        local weld = seg and seg:FindFirstChildOfClass("WeldConstraint")
+        return weld ~= nil and weld.Part0 == head
+    end
+
+    local function removeFrom(body)
+        if not body then return end
+        local old = body:FindFirstChild(HORNS_NAME)
+        while old do
+            old:Destroy()
+            old = body:FindFirstChild(HORNS_NAME)
+        end
+    end
+
+    -- makes sure `body` (character or clone) has working horns on ITS OWN head
+    local function ensureOn(body)
+        if not body or not body.Parent then return end
+        local head = body:FindFirstChild("Head")
+        if not head or not head:IsA("BasePart") then return end
+        if hornsValid(body, head) then return end
+        removeFrom(body) -- a broken / half-copied set: rebuild it on this head
+        G.buildHorns(body, head)
+    end
+
+    local function flicker(body)
+        local horns = body and body:FindFirstChild(HORNS_NAME)
+        if not horns then return end
+        for _, seg in ipairs(horns:GetChildren()) do
+            if seg:IsA("BasePart") then seg.Color = G.randomShade() end
+        end
+    end
+
+    G.update = function()
+        if deleted or not G.active then return end
+        local now = os.clock()
+        if now >= G.nextEnsureAt then
+            G.nextEnsureAt = now + 0.3
+            ensureOn(player.Character)
+            if ghostModel and ghostModel.Parent then ensureOn(ghostModel) end -- the clone gets its own horns
+        end
+        if now >= G.nextFlickerAt then
+            G.nextFlickerAt = now + G.FLICKER_RATE
+            flicker(player.Character)
+            if ghostModel and ghostModel.Parent then flicker(ghostModel) end
+        end
+    end
+
+    G.setActive = function(on)
+        G.active = on
+        G.nextEnsureAt, G.nextFlickerAt = 0, 0
+        if on then
+            G.update()
+        else
+            removeFrom(player.Character)
+            removeFrom(ghostModel)
+        end
+    end
+
+    G.cleanup = function()
+        G.active = false
+        if G.conn then G.conn:Disconnect() G.conn = nil end
+        removeFrom(player.Character)
+        removeFrom(ghostModel)
+    end
+
+    G.conn = RunService.Heartbeat:Connect(G.update)
+end
 
 ------------------------------------------------------------------
 -- MODES (M): each mode sets the colours, the text + font (move list title and the name above
@@ -5508,6 +5847,8 @@ CONFIG.MODES.apply = function(index, silent)
     refreshColor("muzzle")
     CONFIG.FX.loudnessColor = mode.loudnessColor == true -- visualizer goes black -> gray -> white with the song's loudness
     CONFIG.FX.strength = mode.visualizerStrength or CONFIG.VISUALIZER.STRENGTH -- this mode's own visualizer strength
+    CONFIG.FX.shadeFlicker = mode.godCat == true -- God Cat: visualizer flickers through shades of black and white
+    CONFIG.GODCAT.setActive(mode.godCat == true) -- God Cat: horns on the body / clone
 
     -- idle animations + patterns, and animations to replace (the tracks are swapped in the background)
     CONFIG.IDLE.setSpecs(mode)
@@ -5580,6 +5921,8 @@ deleteAll = function()
     if MovesBox.tag then MovesBox.tag:Destroy() MovesBox.tag = nil end
     CONFIG.THEME.stop(true)
     CONFIG.DELETE.restoreAll()
+    CONFIG.GODCAT.cleanup()
+    if CONFIG.REPLACE.conn then CONFIG.REPLACE.conn:Disconnect() CONFIG.REPLACE.conn = nil end
     CONFIG.FX.destroy()
     if Perf.reportConn then Perf.reportConn:Disconnect() Perf.reportConn = nil end
 end
@@ -5618,6 +5961,8 @@ inputConn = UserInputService.InputBegan:Connect(function(input, gameProcessed)
     elseif input.KeyCode == CONFIG.FLOWING_KEY then CONFIG.FLOW.start()
     elseif input.KeyCode == CONFIG.FLING.KEY then CONFIG.FLING.start()
     elseif input.KeyCode == CONFIG.DELETE.KEY then CONFIG.DELETE.start()
+    elseif input.KeyCode == CONFIG.ATTACK.KEY then CONFIG.ATTACK.cycle()
+    elseif input.KeyCode == CONFIG.BRING.KEY then CONFIG.BRING.cycle()
     elseif input.KeyCode == CONFIG.MODES.SWITCH_KEY then CONFIG.MODES.next() end
 end)
 ghostInputEndedConn = UserInputService.InputEnded:Connect(function(input)
