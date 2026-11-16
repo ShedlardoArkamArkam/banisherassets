@@ -657,7 +657,7 @@ local ov, stillTime, idle2ReadyAt, idleHeld = nil, 0, 0, false
 local ORBIT_DISTANCE = 3
 local ORBIT_HEIGHT = 0
 local ORBIT_OFFSET_SPACE = "Target Local"
-local VOID_Y = -2000
+local VOID_Y = -1000
 local WATCHED_ANIMATION_ID = "12296113986"
 local ORBIT_TOOL_NAME = "Lethal Whirlwind Stream"
 CONFIG.FLOW = {
@@ -692,7 +692,7 @@ CONFIG.FLING = {
 --   Banish : E sends us to BANISH_Y (a really big number, high above the map)
 CONFIG.ATTACK = {
     KEY = Enum.KeyCode.P,
-    KILL_Y = -100,    -- the default void height
+    KILL_Y = -200000,    -- the default void height
     BANISH_Y = 10000000,     -- Banish height (raise it for an even bigger number)
     modes = { "Kill" },
     index = 1,          -- starts on Kill
@@ -710,7 +710,7 @@ end
 CONFIG.BRING = {
     KEY = Enum.KeyCode.L,
     modes = {"Bring", "Banish" },
-    index = 2,          -- starts on Bring = the original R move
+    index = 1,          -- starts on Bring = the original R move
     locked = nil,       -- the mode R started with (a mode change mid-move does not affect it)
 }
 CONFIG.BRING.mode = function()
@@ -3005,7 +3005,7 @@ CONFIG.IL = {
     CLONE_COLOR = Color3.new(0, 0, 0),       -- the black copy that splits apart
     CLONE_MATERIAL = Enum.Material.SmoothPlastic,
     CLONE_TIME = 1.6,              -- seconds for the copy to split and shrink to nothing
-    SOUND_HIT = 17871250897,       -- plays when an E move hits a target (global: you hear it from anywhere)
+    SOUND_HIT = 2785493,       -- plays when an E move hits a target (global: you hear it from anywhere)
     SOUND_HIT_VOLUME = 1,
     SOUND_FIRE = 137628815514180,  -- plays instead of the bullet sound for E / C / R
     SOUND_FIRE_START = 0.1,        -- seconds into the fire sound where it starts playing (skips a delay at the start of the file)
