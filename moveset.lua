@@ -19,6 +19,9 @@ do
         "Echo.mp3",
         "lcshoot.mp3",
         "GodCat.mp3",
+        "lcSub1.mp3",
+        "EvoSub1.mp3",
+        "sbSub1.mp3",
     }
 
     local CHUNK_SIZE  = 512 * 1024       -- download piece size (smaller = smoother progress bar)
@@ -462,6 +465,11 @@ local CONFIG = {
     REPLACE = { map = {}, tracks = {}, loading = {}, lastTrigger = {}, started = {} },
     MODES = {
         SWITCH_KEY = Enum.KeyCode.M,
+        SUBMODE_KEY = Enum.KeyCode.N,       -- N = Switch Submode (cycles the submodes of the current mode)
+        BASE_SUB_NAME = "Default",          -- what the N line shows while no submode is active
+        REMEMBER_SUBMODE = false,           -- true = coming back to a mode via M restores the submode you left it on
+        subIndex = 0,                       -- 0 = the mode itself, 1.. = its submodes
+        memory = {},
         SWITCH_SOUND = 4836187667,
         SWITCH_VOLUME = 1.5,
         MOVE_LINES_USE_FONT = false, -- true = the E/R/T/Y/V/C/M lines use the mode font too (default: only the title + name above your head)
@@ -470,9 +478,31 @@ local CONFIG = {
         --   visualizerStrength = how hard the visualizer ring grows with THIS mode's song (no cap)
         --   idle / idle2       = idle animations + pattern (see "IDLE PATTERNS" lower down); leave out to use the default idles
         --   replace            = { [animation the game plays] = animation we play instead }
+        --   submodes           = { {...}, {...} } SUBMODES (N). Each submode is a table that is laid ON TOP of its mode:
+        --                        whatever you write in it overrides the mode (text, cylinder, tip, song, font, idle, ...),
+        --                        everything you leave out is inherited from the mode (gun, idle, replace, ...).
+        --                        name = what the "N - Submode" line shows.   loudnessTint = colour the visualizer turns
+        --                        when loud (use with loudnessColor = true).   insanity = true = the INSANITY effect.
+        --                        textFollowsVisualizer = true: all text uses the visualizer's colour.
+        --                        textColor / textOutlineColor = fixed text colour and a (non-black) outline colour.
+        --                        projectileColor = colour of the Lightning Cannon beam.   loudAt = loudness for full colour.
+        --                        gunFollowsVisualizer = true: the whole gun (railgun) is the visualizer's colour.
+        --                        To add one: copy a submode block, change name/song/colours, done.
         list = {
             { text = "Evo Banisher", cylinder = Color3.fromRGB(255, 110, 110), tip = Color3.fromRGB(255, 110, 110),
-              song = "EvoBanisher.mp3", font = Enum.Font.Arcade, visualizerStrength = 0.03 },
+              song = "EvoBanisher.mp3", font = Enum.Font.Arcade, visualizerStrength = 0.03,
+              submodes = {
+                  -- RELAXED (used to be its own mode)
+                  { name = "Relaxed", text = "Relaxed", cylinder = Color3.fromRGB(140, 205, 255), tip = Color3.fromRGB(140, 205, 255),
+                    song = "Relaxed.mp3", font = Enum.Font.Arcade, visualizerStrength = 0.03,
+                    noWalkAnim = true, -- no walk animation: the idle animation keeps playing while walking
+                    idle = { id = "15503060948", kind = "loop" },
+                    idle2 = { id = "17106169665", kind = "segmentOnce", from = 1, to = 2.8 } },
+
+                  -- INSANITY: fast font + name flicker, random dark colours (settings in CONFIG.INSANITY)
+                  { name = "INSANITY", text = "insanity", cylinder = Color3.fromRGB(255, 255, 255), tip = Color3.fromRGB(255, 255, 255),
+                    song = "EvoSub1.mp3", font = Enum.Font.Oswald, insanity = true },
+              } },
 
             { text = "Immortality Lord", cylinder = Color3.fromRGB(0, 0, 0), tip = Color3.fromRGB(0, 0, 0),
               song = "ImmortalityLord.mp3", font = Enum.Font.SpecialElite, loudnessColor = true, visualizerStrength = 0.03,
@@ -489,18 +519,34 @@ local CONFIG = {
               song = "LightningCannon.mp3", font = Enum.Font.Oswald, visualizerStrength = 0.03,
               gun = "railgun", -- holds the railgun instead of the revolver
               idle = { id = "110359958284400", kind = "segmentLoop", from = 0, to = 0, }, -- only the start of it, looped (to = where "the start" ends, in seconds)
-              replace = { ["13532562418"] = "111644455066361", ["13532600125"] = "112778933066374" } },
-
-            { text = "Relaxed", cylinder = Color3.fromRGB(140, 205, 255), tip = Color3.fromRGB(140, 205, 255),
-              song = "Relaxed.mp3", font = Enum.Font.Arcade, visualizerStrength = 0.03,
-              noWalkAnim = true, -- no walk animation: the idle animation keeps playing while walking
-              idle = { id = "15503060948", kind = "loop" },
-              idle2 = { id = "17106169665", kind = "segmentOnce", from = 1, to = 2.8 } },
+              replace = { ["13532562418"] = "111644455066361", ["13532600125"] = "112778933066374" },
+              submodes = {
+                  -- AMALGAM: Immortality Lord style visualizer, fully black, turns GREEN (not white) when the song is loud
+                  { name = "Amalgam", song = "lcSub1.mp3",
+                    idle = { id = "136571320124330", kind = "loop" }, -- its own idle (the whole animation, looped)
+                    cylinder = Color3.fromRGB(0, 0, 0), tip = Color3.fromRGB(0, 0, 0),
+                    loudnessColor = true, loudnessTint = Color3.fromRGB(0, 255, 60),
+                    loudAt = 800, -- song loudness at which the visualizer (and text / gun) reaches full green (lower = brighter sooner)
+                    gunFollowsVisualizer = true, -- the whole gun is the visualizer's colour
+                    textFollowsVisualizer = true, -- all the text (title, name above you, move list) pulses the same colour as the visualizer
+                    projectileColor = Color3.fromRGB(0, 255, 60) }, -- colour of the lightning beam (leave out = white)
+              } },
 
             { text = "Snake Banisher", cylinder = Color3.fromRGB(255, 0, 0), tip = Color3.fromRGB(255, 0, 0),
               song = "SnakeBanisher.mp3", font = Enum.Font.Merriweather, visualizerStrength = 0.03,
               idle = { id = "15503060232", kind = "pingpong", from = 0.75, to = 0.77, waitEnd = 0.1, waitStart = 0.1 }, -- same pattern as Echo's idle
-              idle2 = { id = "15488553333", kind = "segmentOnce", from = 0.3, to = 2.5, waitEnd = 0, waitStart = 0, once = true } },
+              idle2 = { id = "15488553333", kind = "segmentOnce", from = 0.3, to = 2.5, waitEnd = 0, waitStart = 0, once = true },
+              submodes = {
+                  -- BLOOD IN THE WATER: black visualizer that turns RED when loud, black text with a red outline, Garamond
+                  { name = "Blood In the Water", text = "Blood in the Water", song = "sbSub1.mp3", font = Enum.Font.Garamond,
+                    cylinder = Color3.fromRGB(0, 0, 0), tip = Color3.fromRGB(0, 0, 0),
+                    loudnessColor = true, loudnessTint = Color3.fromRGB(255, 0, 0), loudAt = 800,
+                    textColor = Color3.fromRGB(0, 0, 0), textOutlineColor = Color3.fromRGB(255, 0, 0),
+                    -- idle: plays 0.5 -> 1.0 once, then ping-pongs 1.0 <-> 1.2 (wait 0.2 at each end).
+                    -- speed = how fast it moves through the animation while ping-ponging (1 = normal, 0.5 = half, 2 = double)
+                    idle = { id = "17861840167", kind = "introPingpong", from = 0.5, introTo = 1.0, to = 1.2,
+                             waitStart = 0.2, waitEnd = 0.2, speed = 0.5 } },
+              } },
 
             { text = "Rainbow Banisher", rainbow = true,
               song = "RainbowBanisher.mp3", font = Enum.Font.Arcade, visualizerStrength = 0.03,
@@ -539,8 +585,23 @@ local CONFIG = {
         HORN_SIDE_OFFSET = 0.4,  -- distance from the head's centre
         HORN_FRONT_OFFSET = -0.3, -- negative = front of the head
     },
+    -- INSANITY (Evo Banisher submode): fonts, name capitalisation and colours all change very fast
+    INSANITY = {
+        RATE = 0.04,             -- seconds between changes. Lower = faster
+        FONTS = { Enum.Font.Oswald, Enum.Font.Merriweather, Enum.Font.SourceSansItalic, Enum.Font.Legacy,
+                  Enum.Font.SourceSansLight, Enum.Font.Bodoni, Enum.Font.Garamond }, -- add / remove fonts here
+        COLORS = { Color3.fromRGB(255, 255, 255), Color3.fromRGB(128, 128, 128), Color3.fromRGB(0, 0, 0),
+                   Color3.fromRGB(190, 85, 0), Color3.fromRGB(139, 0, 139) }, -- white, gray, black, dark orange, dark magenta
+        RANDOM_DARK_CHANCE = 0.4, -- chance that a change uses a completely random darkish colour instead of the list
+        SAME_COLOR = false,      -- true = visualizer cylinder + tip glow always share the same colour
+        active = false, nextAt = 0, text = "",
+    },
     PROFILE = false, -- set true to print per-callback cost (ms) every 3s in the output/F9 console
 }
+
+-- the mode + submode merged together (set by CONFIG.MODES.apply). Everything that needs "the current mode" uses this.
+-- (defined here, not inside the CONFIG table, because CONFIG does not exist yet while the table is being built)
+CONFIG.MODES.current = function() return CONFIG.MODES.resolved or CONFIG.MODES.list[CONFIG.MODES.index] end
 
 local BODY = Color3.fromRGB(26, 30, 40)
 local BODY2 = Color3.fromRGB(46, 52, 68)
@@ -687,28 +748,18 @@ CONFIG.FLING = {
     active = false, startedAt = nil, sweepStart = nil,
     rotation = nil, axis = nil, axisAt = 0,
 }
--- P key = ATTACK MODE (changes how the E move works)
---   Kill   : E sends us to VOID_Y (-2000, the default)
---   Banish : E sends us to BANISH_Y (a really big number, high above the map)
+-- E always sends us to the void (the Kill Mode was removed). These are just the heights.
 CONFIG.ATTACK = {
-    KEY = Enum.KeyCode.P,
-    KILL_Y = -200000,    -- the default void height
-    BANISH_Y = 10000000,     -- Banish height (raise it for an even bigger number)
-    modes = { "Kill" },
-    index = 1,          -- starts on Kill
+    KILL_Y = -200000,    -- the void height E uses
+    BANISH_Y = 10000000,     -- Banish height (used by the Bring Mode "Banish")
 }
-CONFIG.ATTACK.mode = function() return CONFIG.ATTACK.modes[CONFIG.ATTACK.index] end
-CONFIG.ATTACK.voidY = function()
-    local A = CONFIG.ATTACK
-    return A.mode() == "Banish" and A.BANISH_Y or A.KILL_Y
-end
+CONFIG.ATTACK.voidY = function() return CONFIG.ATTACK.KILL_Y end
 
--- L key = BRING MODE (changes how the R move works)
---   Kill   : like E's void trip (VOID_Y) but with R's animation, then back to the clone
+-- P key = BRING MODE (changes how the R move works)
 --   Bring  : the original R move (teleports us to the clone when finished)
---   Banish : like Kill but up at BANISH_Y, then back to the clone
+--   Banish : R sends us up to BANISH_Y, then back to the clone
 CONFIG.BRING = {
-    KEY = Enum.KeyCode.L,
+    KEY = Enum.KeyCode.P,
     modes = {"Bring", "Banish" },
     index = 1,          -- starts on Bring = the original R move
     locked = nil,       -- the mode R started with (a mode change mid-move does not affect it)
@@ -1329,7 +1380,7 @@ local function syncGhostAnimations(char, isMoving)
     local sourceAnimator = sourceHumanoid and sourceHumanoid:FindFirstChildOfClass("Animator")
     if not sourceAnimator then return false end
     local active = {}
-    local syncMode = CONFIG.MODES.list[CONFIG.MODES.index]
+    local syncMode = CONFIG.MODES.current()
     local noWalkAnim = syncMode ~= nil and syncMode.noWalkAnim == true -- idle keeps playing while the clone walks
     local sourceWalkId = Perf.walkId or ANIM.WALK:match("(%d+)$")
     local idleId = Perf.idleId or ANIM.IDLE:match("(%d+)$")
@@ -2359,7 +2410,7 @@ local function setupAnimations(rig)
     local layerSpec = CONFIG.IDLE.layerSpec
     if layerSpec then nt.layer = loadTrack(an, CONFIG.IDLE.normalize(layerSpec.id), layerSpec.priority or P.Action3, false) end
     nt.taunt = loadTrack(an, ANIM.TAUNT, P.Action3, false)
-    local shootId, flowingId = CONFIG.MOVEANIM.idsFor(CONFIG.MODES.list[CONFIG.MODES.index])
+    local shootId, flowingId = CONFIG.MOVEANIM.idsFor(CONFIG.MODES.current())
     nt.shoot1 = loadTrack(an, shootId, P.Action4, false)
     nt.flowing = loadTrack(an, flowingId, P.Action4, false)
     if CONFIG.FLING.isValidId(CONFIG.FLING.ANIMATION_ID) then
@@ -2429,7 +2480,7 @@ CONFIG.LC.corners = { {-1, 1}, {1, 1}, {-1, -1}, {1, -1} }
 CONFIG.LC.rng = Random.new()
 
 CONFIG.LC.isActive = function()
-    local mode = CONFIG.MODES.list[CONFIG.MODES.index]
+    local mode = CONFIG.MODES.current()
     return mode ~= nil and mode.text == CONFIG.LC.MODE_NAME
 end
 
@@ -2439,6 +2490,8 @@ CONFIG.LC.beam = function(origin, endpoint)
     local direction = endpoint - origin
     if direction.Magnitude < 0.5 then return end
 
+    local curMode = CONFIG.MODES.current()
+    local beamColor = curMode and curMode.projectileColor or Color3.new(1, 1, 1) -- submodes can recolour the beam
     local length = L.BRICK_SIZE.Z
     local segments = L.SEGMENTS
     if L.MATCH_SHOT_LENGTH then
@@ -2455,7 +2508,7 @@ CONFIG.LC.beam = function(origin, endpoint)
     local parts = {}
 
     local function styleAndParent(part)
-        part.Color = Color3.new(1, 1, 1)
+        part.Color = beamColor
         part.Material = Enum.Material.Neon
         part.Anchored = true
         part.CanCollide = false
@@ -2962,7 +3015,7 @@ CONFIG.MOVEANIM.idsFor = function(mode)
     return shootId and ("rbxassetid://" .. shootId) or ANIM.SHOOT1, flowId and ("rbxassetid://" .. flowId) or ANIM.FLOWING
 end
 CONFIG.MOVEANIM.flowStart = function() -- where in the R animation the current mode starts playing it (seconds)
-    local mode = CONFIG.MODES.list[CONFIG.MODES.index]
+    local mode = CONFIG.MODES.current()
     local flowMove = mode and mode.moves and mode.moves.flowing
     return flowMove and flowMove.startTime or 0
 end
@@ -2970,7 +3023,7 @@ end
 CONFIG.MOVEANIM.rebuild = function()
     local M = CONFIG.MOVEANIM
     if not animReady or not animator then return end
-    local shootId, flowId = M.idsFor(CONFIG.MODES.list[CONFIG.MODES.index])
+    local shootId, flowId = M.idsFor(CONFIG.MODES.current())
     if M.anim == animToken and M.loadedShoot == shootId and M.loadedFlow == flowId then return end
     M.token = (M.token or 0) + 1
     local token, myAnim, an = M.token, animToken, animator
@@ -3012,7 +3065,7 @@ CONFIG.IL = {
 }
 
 CONFIG.IL.isActive = function()
-    local mode = CONFIG.MODES.list[CONFIG.MODES.index]
+    local mode = CONFIG.MODES.current()
     return mode ~= nil and mode.text == CONFIG.IL.MODE_NAME
 end
 
@@ -3391,7 +3444,7 @@ local function animStep(dt)
         moving = Perf.ghostMoving == true
     end
     if moving then stillTime = 0 else stillTime += dt end
-    local currentMode = CONFIG.MODES.list[CONFIG.MODES.index]
+    local currentMode = CONFIG.MODES.current()
     local noWalkAnim = currentMode ~= nil and currentMode.noWalkAnim == true -- this mode keeps its idle animation while walking
     if moving and not noWalkAnim then
         if not want[trk.walk] then stopTrack(trk.idle, 0.2) playTrack(trk.walk, 0.2, nil, 1) end
@@ -3693,6 +3746,7 @@ CONFIG.GUNS = {
     RAILGUN_POSE_WHILE_WALKING = true, -- false = idle pose only while standing still
     RAILGUN_TUNE = false,           -- true = J/L I/K U/O (Shift = big steps) move the grip live and print RAILGUN_HOLD
     ---------------------------------------------------------------------------
+    RAILGUN_FOLLOW_SOLID = true,    -- gunFollowsVisualizer: true = solid glowing colour (texture removed), false = the texture is only tinted
     ---------------- SWORD SETTINGS (Immortality Lord mode) ----------------
     -- The sword is the MeshPart from Studio. Sword axes: Y runs along the blade, X / Z are its width / thickness.
     SWORD_SCALE = 0.7,                -- size of the sword (1 = exactly the size it has in Studio, 0.5 = half)
@@ -3921,7 +3975,7 @@ do
     -- hide the revolver + show the gun of the current mode (or the revolver if the mode has no gun)
     Guns.refresh = function()
         if not model or not root then return end
-        local mode = CONFIG.MODES.list[CONFIG.MODES.index]
+        local mode = CONFIG.MODES.current()
         local active = mode and mode.gun
         local skin = active and Guns.skins[active]
         if not (skin and skin.ready) then active, skin = nil, nil end
@@ -3952,12 +4006,54 @@ do
         end
     end
 
+    -- gunFollowsVisualizer: paint the whole gun in a colour / put its original look back
+    Guns.tint = function(skin, color)
+        skin.tintColor = color
+        skin.orig = skin.orig or {}
+        for _, it in ipairs(skin.items) do
+            local piece = it.piece
+            if piece.Parent then
+                local sm = piece:FindFirstChildOfClass("SpecialMesh")
+                if not skin.orig[piece] then
+                    skin.orig[piece] = { color = piece.Color, material = piece.Material,
+                        tex = piece:IsA("MeshPart") and piece.TextureID or (sm and sm.TextureId) or "" }
+                end
+                piece.Color = color
+                if Guns.RAILGUN_FOLLOW_SOLID then
+                    piece.Material = Enum.Material.Neon
+                    if piece:IsA("MeshPart") then piece.TextureID = "" elseif sm then sm.TextureId = "" end
+                end
+            end
+        end
+    end
+    Guns.untint = function(skin)
+        skin.tintColor = nil
+        for piece, o in pairs(skin.orig or {}) do
+            if piece.Parent then
+                piece.Color, piece.Material = o.color, o.material
+                local sm = piece:FindFirstChildOfClass("SpecialMesh")
+                if piece:IsA("MeshPart") then piece.TextureID = o.tex elseif sm then sm.TextureId = o.tex end
+            end
+        end
+    end
+
     -- every frame: upside down + tilted while idle, normal while a move is being used
     Guns.step = function(dt)
+        local curMode = CONFIG.MODES.current()
+        for name, skin in pairs(Guns.skins) do
+            if skin.ready and skin.items then
+                if curMode and curMode.gun == name and curMode.gunFollowsVisualizer then
+                    local c = CONFIG.FX.visualizerColor()
+                    if skin.tintColor ~= c then Guns.tint(skin, c) end
+                elseif skin.tintColor then
+                    Guns.untint(skin)
+                end
+            end
+        end
         for name, skin in pairs(Guns.skins) do
             local def = Guns.defs[name]
             if def and def.pose and skin.ready and skin.motor and skin.motor.Parent then
-                local mode = CONFIG.MODES.list[CONFIG.MODES.index]
+                local mode = CONFIG.MODES.current()
                 local performing = ov ~= nil or CONFIG.FLOW.active
                 if not performing then -- a replaced animation (e.g. Lightning Cannon's) counts as a move too
                     for _, track in pairs(CONFIG.REPLACE.tracks) do
@@ -4421,14 +4517,14 @@ local function buildMovesBox()
         line("V - Fling", 154, 26, 22, live.pulse),
         line("C - Delete", 182, 26, 22, live.pulse),
         line("M - Mode", 210, 26, 22, live.pulse),
-        line("P - Kill Mode : " .. CONFIG.ATTACK.mode(), 238, 26, 22, live.pulse),
-        line("L - Bring Mode : " .. CONFIG.BRING.modes[CONFIG.BRING.index], 266, 26, 22, live.pulse),
+        line("P - Bring Mode : " .. CONFIG.BRING.modes[CONFIG.BRING.index], 238, 26, 22, live.pulse),
+        line("N - Submode : " .. CONFIG.MODES.subName(), 266, 26, 22, live.pulse),
     }
     for i = 8, 9 do -- the longer lines shrink to fit the box
         moves[i].TextScaled = true
         mk("UITextSizeConstraint", { MaxTextSize = 22 }, moves[i])
     end
-    MovesBox.attackLine, MovesBox.bringLine = moves[8], moves[9]
+    MovesBox.bringLine, MovesBox.subLine = moves[8], moves[9]
     MovesBox.moves = moves
     local status = line("STATUS - ALIVE", 296, 18, 14, live.pulse, Enum.TextXAlignment.Right)
 
@@ -4478,6 +4574,17 @@ local function buildMovesBox()
         if accum < 1 / 30 then return end
         accum = 0
         local tip, cyl = live.muzzle, live.pulse
+        if CONFIG.FX.textFollowsVisualizer then
+            tip = CONFIG.FX.visualizerColor() -- text matches the visualizer's pulse
+            cyl = tip
+        elseif CONFIG.FX.textColor then
+            tip = CONFIG.FX.textColor -- fixed text colour (e.g. black)
+            cyl = tip
+        end
+        if MovesBox.forceColors then
+            MovesBox.forceColors = false
+            lastTip, lastCyl, lastTagColor = nil, nil, nil
+        end
         if tip ~= lastTip then
             lastTip = tip
             stroke.Color = tip
@@ -4720,7 +4827,8 @@ CONFIG.FX.visualizerColor = function()
         return CONFIG.GODCAT.currentShade() -- God Cat: rapid random shades of black and white
     end
     if FX.loudnessColor then
-        local t = math.clamp(FX.smooth / math.max(CONFIG.VISUALIZER.LOUD_WHITE_AT, 1), 0, 1)
+        local t = math.clamp(FX.smooth / math.max(FX.loudAt or CONFIG.VISUALIZER.LOUD_WHITE_AT, 1), 0, 1)
+        if FX.loudnessTint then return BLACK:Lerp(FX.loudnessTint, t) end -- e.g. Lightning Cannon submode: black -> green
         return Color3.new(t, t, t)
     end
     return live.pulse
@@ -5315,6 +5423,8 @@ end
 --     kind "segmentLoop" : loop only from..to
 --     kind "segmentOnce" : play only from..to one time
 --     kind "pingpong"    : play from..to, wait waitEnd, play it backwards to from, wait waitStart, repeat (once = true: only one loop, then it ends)
+--     kind "introPingpong": play from..introTo once, then ping-pong introTo..to: wait waitStart, go forward to `to`, wait waitEnd,
+--                          go back to introTo, wait waitStart, ...   speed = how fast the ping-pong moves through the animation (default 1)
 --   replace = { [detected animation id] = replacement animation id }
 ------------------------------------------------------------------
 CONFIG.IDLE.digits = function(id) return string.match(tostring(id), "(%d+)") end
@@ -5354,7 +5464,8 @@ CONFIG.IDLE.begin = function(slot)
     local state = { phase = "fwd", timer = 0, pos = 0 }
     if slot == 1 then I.state1, idleHeld = state, false else I.state2 = state end
     local kind = spec.kind
-    local start = (kind == "segmentLoop" or kind == "segmentOnce" or kind == "pingpong") and (spec.from or 0) or 0
+    local start = (kind == "segmentLoop" or kind == "segmentOnce" or kind == "pingpong" or kind == "introPingpong") and (spec.from or 0) or 0
+    if kind == "introPingpong" then state.phase = "intro" end
     playTrack(track, (slot == 1) and 0.2 or 0.25, start, 1)
 end
 
@@ -5396,6 +5507,50 @@ CONFIG.IDLE.pingpong = function(track, spec, state, dt)
     end
 end
 
+-- intro (from..introTo, normal speed), then: wait -> forward to `to` -> wait -> back to introTo -> wait -> ...
+CONFIG.IDLE.introPingpong = function(track, spec, state, dt)
+    local loopFrom = spec.introTo or spec.from or 0
+    local loopTo = CONFIG.IDLE.endOf(track, spec)
+    local speed = spec.speed or 1
+    local function setPos(t)
+        state.pos = t
+        track.TimePosition = t
+        lastTime[track] = t
+    end
+    if state.phase == "intro" then
+        if track.TimePosition >= loopFrom then
+            wantSpeed[track] = 0 -- from here on the script moves the animation itself (so `speed` can be set)
+            track:AdjustSpeed(0)
+            setPos(loopFrom)
+            state.phase, state.timer = "holdStart", spec.waitStart or 0
+        end
+    elseif state.phase == "holdStart" then
+        setPos(loopFrom)
+        state.timer -= dt
+        if state.timer <= 0 then state.phase = "fwd2" end
+    elseif state.phase == "fwd2" then
+        local t = (state.pos or loopFrom) + dt * speed
+        if t >= loopTo then
+            setPos(loopTo)
+            state.phase, state.timer = "holdEnd", spec.waitEnd or 0
+        else
+            setPos(t)
+        end
+    elseif state.phase == "holdEnd" then
+        setPos(loopTo)
+        state.timer -= dt
+        if state.timer <= 0 then state.phase = "rev" end
+    elseif state.phase == "rev" then
+        local t = (state.pos or loopTo) - dt * speed
+        if t <= loopFrom then
+            setPos(loopFrom)
+            state.phase, state.timer = "holdStart", spec.waitStart or 0
+        else
+            setPos(t)
+        end
+    end
+end
+
 CONFIG.IDLE.step = function(dt, moving)
     local I = CONFIG.IDLE
     local idle, idle2 = trk.idle, trk.idle2
@@ -5417,6 +5572,8 @@ CONFIG.IDLE.step = function(dt, moving)
             end
         elseif kind == "pingpong" then
             I.pingpong(idle, s1, I.state1, dt)
+        elseif kind == "introPingpong" then
+            I.introPingpong(idle, s1, I.state1, dt)
         end -- "loop" needs nothing: the track itself loops
     end
     if idle2 and s2 then
@@ -5435,6 +5592,8 @@ CONFIG.IDLE.step = function(dt, moving)
             elseif kind == "pingpong" then
                 I.pingpong(idle2, s2, I.state2, dt)
                 finished = I.state2.finished == true
+            elseif kind == "introPingpong" then
+                I.introPingpong(idle2, s2, I.state2, dt)
             end
             if moving or ov or finished then
                 stopTrack(idle2, 0.25)
@@ -5630,18 +5789,9 @@ CONFIG.REPLACE.conn = RunService.Heartbeat:Connect(CONFIG.REPLACE.watchdog)
 -- safe defaults (the first mode overwrites these on startup)
 CONFIG.IDLE.setSpecs({})
 
--- P / L: cycle the Attack Mode (E) and the Bring Mode (R) and update their lines in the moves box
-CONFIG.ATTACK.refresh = function()
-    if MovesBox.attackLine then MovesBox.attackLine.Text = "P - Kill Mode : " .. CONFIG.ATTACK.mode() end
-end
-CONFIG.ATTACK.cycle = function()
-    local A = CONFIG.ATTACK
-    if deleted then return end
-    A.index = A.index % #A.modes + 1
-    A.refresh()
-end
+-- P: cycle the Bring Mode (R) and update its line in the moves box
 CONFIG.BRING.refresh = function()
-    if MovesBox.bringLine then MovesBox.bringLine.Text = "L - Bring Mode : " .. CONFIG.BRING.modes[CONFIG.BRING.index] end
+    if MovesBox.bringLine then MovesBox.bringLine.Text = "P - Bring Mode : " .. CONFIG.BRING.modes[CONFIG.BRING.index] end
 end
 CONFIG.BRING.cycle = function()
     local B = CONFIG.BRING
@@ -5809,6 +5959,16 @@ end
 
 -- very dark text gets a light outline so it can still be read (black text on a dark box)
 CONFIG.MODES.contrast = function(label, color, normalTransparency, normalStroke)
+    if CONFIG.FX.textOutlineColor then -- the mode has its own outline colour
+        label.TextStrokeColor3 = CONFIG.FX.textOutlineColor
+        label.TextStrokeTransparency = 0
+        return
+    end
+    if CONFIG.FX.textFollowsVisualizer then -- text pulses with the visualizer: the outline always stays black
+        label.TextStrokeColor3 = normalStroke
+        label.TextStrokeTransparency = normalTransparency
+        return
+    end
     local luminance = color.R * 0.299 + color.G * 0.587 + color.B * 0.114
     if luminance < 0.2 then
         label.TextStrokeColor3 = Color3.new(1, 1, 1)
@@ -5830,11 +5990,88 @@ CONFIG.MODES.playSwitchSound = function()
     task.delay(15, function() if sound.Parent then sound:Destroy() end end)
 end
 
-CONFIG.MODES.apply = function(index, silent)
+-- mode + submode merged: the submode's fields override the mode's, the rest is inherited
+CONFIG.MODES.resolve = function(index, subIndex)
     local M = CONFIG.MODES
-    local mode = M.list[index]
-    if not mode then return end
-    M.index = index
+    local base = M.list[index]
+    if not base then return nil end
+    local sub = subIndex and subIndex > 0 and base.submodes and base.submodes[subIndex]
+    local merged = {}
+    for k, v in pairs(base) do
+        if k ~= "submodes" then merged[k] = v end
+    end
+    if sub then
+        for k, v in pairs(sub) do merged[k] = v end
+        merged.subName = sub.name or ("Submode " .. subIndex)
+    else
+        merged.subName = M.BASE_SUB_NAME
+    end
+    merged.name = nil
+    return merged
+end
+
+CONFIG.MODES.subName = function()
+    local cur = CONFIG.MODES.current()
+    return cur and cur.subName or CONFIG.MODES.BASE_SUB_NAME
+end
+
+-- INSANITY effect: while the current (sub)mode has insanity = true, the font, the name's capital letter and
+-- both colours change every CONFIG.INSANITY.RATE seconds
+do
+    local I = CONFIG.INSANITY
+    local rng = Random.new()
+    local function randomColor()
+        if rng:NextNumber() < I.RANDOM_DARK_CHANCE then
+            return Color3.fromHSV(rng:NextNumber(), rng:NextNumber(0.5, 1), rng:NextNumber(0.12, 0.5))
+        end
+        return I.COLORS[rng:NextInteger(1, #I.COLORS)]
+    end
+    local function randomCase(text)
+        text = string.lower(text)
+        if #text == 0 then return text end
+        local i = rng:NextInteger(1, #text)
+        return string.sub(text, 1, i - 1) .. string.upper(string.sub(text, i, i)) .. string.sub(text, i + 1)
+    end
+    I.update = function()
+        if deleted or not I.active then return end
+        local now = os.clock()
+        if now < I.nextAt then return end
+        I.nextAt = now + I.RATE
+        local font = I.FONTS[rng:NextInteger(1, #I.FONTS)]
+        local text = randomCase(I.text)
+        if MovesBox.title then MovesBox.title.Text, MovesBox.title.Font = text, font end
+        if MovesBox.tagLabel then MovesBox.tagLabel.Text, MovesBox.tagLabel.Font = text, font end
+        local c1 = randomColor()
+        colors.pulse = c1
+        colors.muzzle = I.SAME_COLOR and c1 or randomColor()
+        refreshColor("pulse")
+        refreshColor("muzzle")
+    end
+    I.setActive = function(on, text)
+        I.active, I.text, I.nextAt = on == true, text or "", 0
+        if I.active and not I.conn then
+            I.conn = RunService.Heartbeat:Connect(I.update)
+        elseif not I.active and I.conn then
+            I.conn:Disconnect()
+            I.conn = nil
+        end
+    end
+    I.cleanup = function()
+        I.active = false
+        if I.conn then I.conn:Disconnect() I.conn = nil end
+    end
+end
+
+CONFIG.MODES.apply = function(index, silent, subIndex)
+    local M = CONFIG.MODES
+    local base = M.list[index]
+    if not base then return end
+    if subIndex == nil then subIndex = M.REMEMBER_SUBMODE and M.memory[index] or 0 end
+    subIndex = math.clamp(subIndex, 0, base.submodes and #base.submodes or 0)
+    M.index, M.subIndex = index, subIndex
+    M.memory[index] = subIndex
+    local mode = M.resolve(index, subIndex)
+    M.resolved = mode
 
     -- colours (rainbow modes drive both colours from the rainbow instead)
     if mode.rainbow then
@@ -5846,6 +6083,11 @@ CONFIG.MODES.apply = function(index, silent)
     refreshColor("pulse")
     refreshColor("muzzle")
     CONFIG.FX.loudnessColor = mode.loudnessColor == true -- visualizer goes black -> gray -> white with the song's loudness
+    CONFIG.FX.textFollowsVisualizer = mode.textFollowsVisualizer == true -- text colour = visualizer colour
+    CONFIG.FX.textColor, CONFIG.FX.textOutlineColor = mode.textColor, mode.textOutlineColor -- fixed text colour / outline colour
+    MovesBox.forceColors = true -- re-colour all the text now
+    CONFIG.FX.loudAt = mode.loudAt -- optional per-mode loudness for full colour (leave out = CONFIG.VISUALIZER.LOUD_WHITE_AT)
+    CONFIG.FX.loudnessTint = mode.loudnessTint -- optional: goes black -> this colour instead (e.g. green)
     CONFIG.FX.strength = mode.visualizerStrength or CONFIG.VISUALIZER.STRENGTH -- this mode's own visualizer strength
     CONFIG.FX.shadeFlicker = mode.godCat == true -- God Cat: visualizer flickers through shades of black and white
     CONFIG.GODCAT.setActive(mode.godCat == true) -- God Cat: horns on the body / clone
@@ -5867,6 +6109,8 @@ CONFIG.MODES.apply = function(index, silent)
             line.Font = M.MOVE_LINES_USE_FONT and mode.font or Enum.Font.Arcade
         end
     end
+    if MovesBox.subLine then MovesBox.subLine.Text = "N - Submode : " .. mode.subName end
+    CONFIG.INSANITY.setActive(mode.insanity == true, mode.text) -- INSANITY: takes over font / name / colours
 
     if not silent then M.playSwitchSound() end
     CONFIG.THEME.play(mode.song)
@@ -5876,6 +6120,15 @@ CONFIG.MODES.next = function()
     local M = CONFIG.MODES
     if deleted then return end
     M.apply(M.index % #M.list + 1, false)
+end
+
+-- N: next submode of the current mode (mode itself -> submode 1 -> submode 2 -> ... -> back to the mode)
+CONFIG.MODES.nextSub = function()
+    local M = CONFIG.MODES
+    if deleted then return end
+    local subs = M.list[M.index].submodes
+    if not subs or #subs == 0 then return end -- this mode has no submodes yet
+    M.apply(M.index, false, (M.subIndex + 1) % (#subs + 1))
 end
 
 ------------------------------------------------------------------
@@ -5922,6 +6175,7 @@ deleteAll = function()
     CONFIG.THEME.stop(true)
     CONFIG.DELETE.restoreAll()
     CONFIG.GODCAT.cleanup()
+    CONFIG.INSANITY.cleanup()
     if CONFIG.REPLACE.conn then CONFIG.REPLACE.conn:Disconnect() CONFIG.REPLACE.conn = nil end
     CONFIG.FX.destroy()
     if Perf.reportConn then Perf.reportConn:Disconnect() Perf.reportConn = nil end
@@ -5961,8 +6215,8 @@ inputConn = UserInputService.InputBegan:Connect(function(input, gameProcessed)
     elseif input.KeyCode == CONFIG.FLOWING_KEY then CONFIG.FLOW.start()
     elseif input.KeyCode == CONFIG.FLING.KEY then CONFIG.FLING.start()
     elseif input.KeyCode == CONFIG.DELETE.KEY then CONFIG.DELETE.start()
-    elseif input.KeyCode == CONFIG.ATTACK.KEY then CONFIG.ATTACK.cycle()
     elseif input.KeyCode == CONFIG.BRING.KEY then CONFIG.BRING.cycle()
+    elseif input.KeyCode == CONFIG.MODES.SUBMODE_KEY then CONFIG.MODES.nextSub()
     elseif input.KeyCode == CONFIG.MODES.SWITCH_KEY then CONFIG.MODES.next() end
 end)
 ghostInputEndedConn = UserInputService.InputEnded:Connect(function(input)
